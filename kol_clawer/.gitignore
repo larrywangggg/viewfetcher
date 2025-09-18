@@ -1,0 +1,31 @@
+# 忽略虚拟环境
+venv/
+.env/
+.venv/
+
+# 忽略 Python 缓存文件
+__pycache__/
+*.py[cod]
+*$py.class
+
+# 忽略 Jupyter Notebook checkpoint
+.ipynb_checkpoints/
+
+# 忽略数据库文件（如果有 SQLite）
+*.sqlite3
+*.db
+
+# 忽略日志和临时文件
+*.log
+*.pot
+*.pyc
+*.pyo
+*.tmp
+*.swp
+
+# 忽略系统文件
+.DS_Store
+Thumbs.db
+
+# 忽略 VSCode 配置（可选，团队不共享时建议忽略）
+.vscode/
