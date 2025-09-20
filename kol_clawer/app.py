@@ -159,53 +159,53 @@ with st.container():
         data = data.sort_values("id", ascending=True)      # id 升序
         st.dataframe(data.set_index("id"), use_container_width=True, height=420)
             
-     # —— 安全筛选区（根据实际列动态渲染）——
-    cols = st.columns(3)
+    #  # —— 安全筛选区（根据实际列动态渲染）——
+    # cols = st.columns(3)
 
-    # 平台筛选（一般都会有）
-    with cols[0]:
-        platform_filter = []
-        if "platform" in data.columns:
-            platform_filter = st.multiselect(
-                "平台筛选",
-                options=sorted(data["platform"].dropna().unique().tolist())
-            )
+    # # 平台筛选（一般都会有）
+    # with cols[0]:
+    #     platform_filter = []
+    #     if "platform" in data.columns:
+    #         platform_filter = st.multiselect(
+    #             "平台筛选",
+    #             options=sorted(data["platform"].dropna().unique().tolist())
+    #         )
 
-    # 活动ID筛选：列不存在就不渲染
-    with cols[1]:
-        campaign_filter = []
-        if "campaign_id" in data.columns:
-            campaign_filter = st.multiselect(
-                "活动ID筛选",
-                options=sorted(data["campaign_id"].dropna().unique().tolist())
-            )
+    # # 活动ID筛选：列不存在就不渲染
+    # with cols[1]:
+    #     campaign_filter = []
+    #     if "campaign_id" in data.columns:
+    #         campaign_filter = st.multiselect(
+    #             "活动ID筛选",
+    #             options=sorted(data["campaign_id"].dropna().unique().tolist())
+    #         )
 
-    # KOL/作者筛选：列不存在就不渲染
-    with cols[2]:
-        creator_filter = []
-        if "creator" in data.columns:
-            creator_filter = st.multiselect(
-                "KOL筛选",
-                options=sorted(data["creator"].dropna().unique().tolist())
-            )
+    # # KOL/作者筛选：列不存在就不渲染
+    # with cols[2]:
+    #     creator_filter = []
+    #     if "creator" in data.columns:
+    #         creator_filter = st.multiselect(
+    #             "KOL筛选",
+    #             options=sorted(data["creator"].dropna().unique().tolist())
+    #         )
 
-    # 过滤逻辑：只有当列存在且用户选择了值时才应用
-    filtered = data.copy()
-    if platform_filter and "platform" in filtered.columns:
-        filtered = filtered[filtered["platform"].isin(platform_filter)]
-    if campaign_filter and "campaign_id" in filtered.columns:
-        filtered = filtered[filtered["campaign_id"].isin(campaign_filter)]
-    if creator_filter and "creator" in filtered.columns:
-        filtered = filtered[filtered["creator"].isin(creator_filter)]
+    # # 过滤逻辑：只有当列存在且用户选择了值时才应用
+    # filtered = data.copy()
+    # if platform_filter and "platform" in filtered.columns:
+    #     filtered = filtered[filtered["platform"].isin(platform_filter)]
+    # if campaign_filter and "campaign_id" in filtered.columns:
+    #     filtered = filtered[filtered["campaign_id"].isin(campaign_filter)]
+    # if creator_filter and "creator" in filtered.columns:
+    #     filtered = filtered[filtered["creator"].isin(creator_filter)]
 
-    st.dataframe(filtered.set_index("id"), use_container_width=True, height=420)
+    # st.dataframe(filtered.set_index("id"), use_container_width=True, height=420)
 
-    st.download_button(
-        "⬇️ 导出当前筛选结果（CSV）",
-        data=filtered.to_csv(index=False),
-        file_name="kol_results_filtered.csv",
-        mime="text/csv"
-    )
+    # st.download_button(
+    #     "⬇️ 导出当前筛选结果（CSV）",
+    #     data=filtered.to_csv(index=False),
+    #     file_name="kol_results_filtered.csv",
+    #     mime="text/csv"
+    # )
 
 
 
@@ -319,17 +319,15 @@ if run and not df.empty:
         if processed % 5 == 0 or processed == len(other_rows):
             progress.progress(1.0, text=f"其他平台：{processed}/{len(other_rows)}")
 
-    # 写库（批量一次）
-    from db import save_result, SessionLocal
-    if results:
-        from sqlalchemy.orm import Session
-        with SessionLocal() as s:
-            from db import Result
-            s.bulk_insert_mappings(Result, results)
-            s.commit()
-        st.success(f"抓取完成！成功写入 {len(results)} 条记录。")
-    else:
-        st.warning("未写入记录。")
+    # 写库（逐条 UPSERT）
+    from db import save_result
+    wrote = 0
+    for row in results:
+        save_result(row)   # ← 这里会自动“有则更新、无则插入”
+        wrote += 1
+
+    st.success(f"抓取完成！写入/更新 {wrote} 条记录。")
+
 
     if errors:
         st.warning("以下记录未写入/失败：\n" + "\n".join(errors))
