@@ -10,6 +10,9 @@ from fetchers import fetch_metrics
 from db import init_db, save_result, Result, SessionLocal
 from sqlalchemy import select
 import math
+from fetchers import fetch_metrics, extract_youtube_id, fetch_youtube_batch_stats
+from datetime import datetime
+
 
 st.set_page_config(page_title="KOL 数据抓取看板", layout="wide")
 
@@ -28,7 +31,10 @@ with st.expander("使用说明（点此展开）", expanded=False):
     """)
 
 # 可选：YouTube API Key
-youtube_api_key = st.text_input("YouTube API Key（可选）", type="password", help="不填也可以运行，默认使用 yt-dlp。")
+youtube_api_key = st.text_input("YouTube API Key", type="password", help="不填也可以运行，默认使用 yt-dlp。")
+
+
+
 
 uploaded = st.file_uploader("上传 KOL 链接表（.xlsx 或 .csv）", type=["xlsx", "csv"])
 
@@ -84,10 +90,7 @@ if run and not df.empty:
         if not platform or not url:
             # 必填校验
             continue
-
-        creator = row.get("creator", None)
-        campaign_id = row.get("campaign_id", None)
-        posted_at = row.get("posted_at", None)
+ 
 
         try:
             metrics = fetch_metrics(platform, url, youtube_api_key if youtube_api_key else None)
@@ -95,23 +98,31 @@ if run and not df.empty:
             likes = int(metrics.get("likes", 0))
             comments = int(metrics.get("comments", 0))
 
-            # 计算互动率，避免除零
+            # 额外取出 creator 和 posted_at
+            creator = metrics.get("creator", "")              # fetch_youtube_batch_stats 里返回的 channelTitle
+            published = metrics.get("posted_at", "")          # fetch_youtube_batch_stats 里返回的 publishedAt
+            posted_dt = None
+            if published:
+                try:
+                    posted_dt = datetime.fromisoformat(published.replace("Z", "+00:00"))
+                except Exception:
+                    posted_dt = None
+
             engagement_rate = round(((likes + comments) / views * 100.0), 2) if views > 0 else 0.0
 
             row_dict = {
                 "platform": platform.lower(),
                 "url": url,
-                "creator": creator,
-                "campaign_id": campaign_id,
-                "posted_at": posted_at,
+                "creator": creator,          # 来自 API，不再从 CSV 读
+                "posted_at": posted_dt,      # 转成 datetime 存数据库
                 "views": views,
                 "likes": likes,
                 "comments": comments,
                 "engagement_rate": engagement_rate,
             }
-            # 保存入库
             save_result(row_dict)
             results.append(row_dict)
+
         except Exception as e:
             # 某一条失败不影响整体
             st.warning(f"抓取失败（第 {idx+1} 行）：{url}，原因：{e}")
@@ -126,8 +137,9 @@ st.subheader("📊 历史抓取结果看板（来自 SQLite）")
 # 简单筛选
 with st.container():
     with SessionLocal() as s:
-        stmt = select(Result).order_by(Result.id.desc())
+        stmt = select(Result).order_by(Result.id.asc())
         rows = s.execute(stmt).scalars().all()
+        
 
     if rows:
         data = pd.DataFrame([{
@@ -143,7 +155,10 @@ with st.container():
             "engagement_rate(%)": round(r.engagement_rate, 2),
             "fetched_at(UTC)": r.fetched_at,
         } for r in rows])
-        
+            # 读库后展示前
+        data = data.sort_values("id", ascending=True)      # id 升序
+        st.dataframe(data.set_index("id"), use_container_width=True, height=420)
+            
         # 侧边筛选
         col1, col2, col3 = st.columns(3)
         with col1:
@@ -172,3 +187,128 @@ with st.container():
         )
     else:
         st.info("当前数据库暂无记录。请先上传表格并点击“开始获取”。")
+
+
+
+if run and not df.empty:
+    st.write("开始抓取中，请稍等……（每周一次，通常几分钟内完成）")
+    progress = st.progress(0, text="准备中...")
+    total = len(df)
+    results = []
+    errors = []
+
+    # 标准化列名
+    df.columns = [str(c).strip().lower() for c in df.columns]
+
+    # 自动推断 url 列（如用户没命名为 url）
+    if "url" not in df.columns:
+        import re as _re
+        for c in df.columns:
+            s = df[c].astype(str)
+            if s.str.contains(r"^https?://", flags=_re.IGNORECASE, na=False).any():
+                df = df.rename(columns={c: "url"})
+                break
+
+    # 自动推断 platform
+    def infer_platform(u: str) -> str:
+        ul = (u or "").lower()
+        if "youtube.com" in ul or "youtu.be" in ul:
+            return "youtube"
+        if "instagram.com" in ul:
+            return "instagram"
+        if "tiktok.com" in ul:
+            return "tiktok"
+        return ""
+
+    if "platform" not in df.columns:
+        df["platform"] = df["url"].apply(infer_platform)
+
+    # --- 分平台处理 ---
+    df = df[["platform", "url", "creator", "campaign_id", "posted_at", "notes"] if "creator" in df.columns else ["platform","url"]].copy()
+
+    # 1) YouTube 批量（需要 API Key）
+    yt_rows = df[df["platform"].str.lower() == "youtube"]
+    if not yt_rows.empty:
+        if not youtube_api_key:
+            errors.append("YouTube 抓取已禁用：未提供 API Key。")
+        else:
+            # 收集所有 videoId
+            yt_rows = yt_rows.copy()
+            yt_rows["video_id"] = yt_rows["url"].apply(extract_youtube_id)
+            yt_rows = yt_rows[yt_rows["video_id"].notna()]
+            vids = yt_rows["video_id"].tolist()
+
+            # 分块请求（<= 50）
+            chunk_size = 50
+            stats_map = {}
+            for i in range(0, len(vids), chunk_size):
+                chunk = vids[i:i+chunk_size]
+                try:
+                    part = fetch_youtube_batch_stats(chunk, youtube_api_key)
+                    stats_map.update(part)
+                except Exception as e:
+                    errors.append(f"YouTube 批量失败（{i}-{i+len(chunk)-1}）：{e}")
+
+                progress.progress(min((i + chunk_size) / max(len(vids),1), 1.0), text=f"YouTube 批量：{min(i+chunk_size,len(vids))}/{len(vids)}")
+
+            # 写入结果
+            for _, r in yt_rows.iterrows():
+                s = stats_map.get(r["video_id"], {"views":0,"likes":0,"comments":0})
+                views = int(s.get("views",0)); likes = int(s.get("likes",0)); comments = int(s.get("comments",0))
+                er = round(((likes+comments)/views*100.0), 2) if views>0 else 0.0
+                results.append({
+                    "platform": "youtube",
+                    "url": r["url"],
+                    "creator": r.get("creator"),
+                    "campaign_id": r.get("campaign_id"),
+                    "posted_at": r.get("posted_at"),
+                    "views": views,
+                    "likes": likes,
+                    "comments": comments,
+                    "engagement_rate": er,
+                })
+
+    # 2) 其他平台：仍使用 yt-dlp 单条（数量少影响不大）
+    other_rows = df[df["platform"].str.lower().isin(["instagram","tiktok"])]
+    processed = 0
+    for idx, row in other_rows.iterrows():
+        url = str(row.get("url","") or "").strip()
+        platform = str(row.get("platform","") or "").strip().lower()
+        if not url or not platform:
+            errors.append(f"第 {idx+1} 行缺少 platform/url，已跳过。"); continue
+        try:
+            metrics = fetch_metrics(platform, url, None)
+            views = int(metrics.get("views", 0))
+            likes = int(metrics.get("likes", 0))
+            comments = int(metrics.get("comments", 0))
+            er = round(((likes+comments)/views*100.0), 2) if views>0 else 0.0
+            results.append({
+                "platform": platform,
+                "url": url,
+                "creator": row.get("creator"),
+                "campaign_id": row.get("campaign_id"),
+                "posted_at": row.get("posted_at"),
+                "views": views, "likes": likes, "comments": comments,
+                "engagement_rate": er,
+            })
+        except Exception as e:
+            errors.append(f"抓取失败（第 {idx+1} 行）：{url}，原因：{e}")
+        processed += 1
+        # 适度更新进度
+        if processed % 5 == 0 or processed == len(other_rows):
+            progress.progress(1.0, text=f"其他平台：{processed}/{len(other_rows)}")
+
+    # 写库（批量一次）
+    from db import save_result, SessionLocal
+    if results:
+        from sqlalchemy.orm import Session
+        with SessionLocal() as s:
+            from db import Result
+            s.bulk_insert_mappings(Result, results)
+            s.commit()
+        st.success(f"抓取完成！成功写入 {len(results)} 条记录。")
+    else:
+        st.warning("未写入记录。")
+
+    if errors:
+        st.warning("以下记录未写入/失败：\n" + "\n".join(errors))
