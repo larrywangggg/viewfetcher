@@ -142,12 +142,12 @@ with st.container():
         
 
     if rows:
+        import pandas as pd
         data = pd.DataFrame([{
             "id": r.id,
             "platform": r.platform,
             "url": r.url,
             "creator": r.creator,
-            "campaign_id": r.campaign_id,
             "posted_at": r.posted_at,
             "views": r.views,
             "likes": r.likes,
@@ -159,34 +159,55 @@ with st.container():
         data = data.sort_values("id", ascending=True)      # id 升序
         st.dataframe(data.set_index("id"), use_container_width=True, height=420)
             
-        # 侧边筛选
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            platform_filter = st.multiselect("平台筛选", options=sorted(data["platform"].dropna().unique().tolist()))
-        with col2:
-            campaign_filter = st.multiselect("活动ID筛选", options=sorted(data["campaign_id"].dropna().unique().tolist()))
-        with col3:
-            creator_filter = st.multiselect("KOL筛选", options=sorted(data["creator"].dropna().unique().tolist()))
+     # —— 安全筛选区（根据实际列动态渲染）——
+    cols = st.columns(3)
 
-        filtered = data.copy()
-        if platform_filter:
-            filtered = filtered[filtered["platform"].isin(platform_filter)]
-        if campaign_filter:
-            filtered = filtered[filtered["campaign_id"].isin(campaign_filter)]
-        if creator_filter:
-            filtered = filtered[filtered["creator"].isin(creator_filter)]
+    # 平台筛选（一般都会有）
+    with cols[0]:
+        platform_filter = []
+        if "platform" in data.columns:
+            platform_filter = st.multiselect(
+                "平台筛选",
+                options=sorted(data["platform"].dropna().unique().tolist())
+            )
 
-        st.dataframe(filtered, use_container_width=True, height=420)
+    # 活动ID筛选：列不存在就不渲染
+    with cols[1]:
+        campaign_filter = []
+        if "campaign_id" in data.columns:
+            campaign_filter = st.multiselect(
+                "活动ID筛选",
+                options=sorted(data["campaign_id"].dropna().unique().tolist())
+            )
 
-        # 导出当前筛选结果
-        st.download_button(
-            "⬇️ 导出当前筛选结果（CSV）",
-            data=filtered.to_csv(index=False),
-            file_name="kol_results_filtered.csv",
-            mime="text/csv"
-        )
-    else:
-        st.info("当前数据库暂无记录。请先上传表格并点击“开始获取”。")
+    # KOL/作者筛选：列不存在就不渲染
+    with cols[2]:
+        creator_filter = []
+        if "creator" in data.columns:
+            creator_filter = st.multiselect(
+                "KOL筛选",
+                options=sorted(data["creator"].dropna().unique().tolist())
+            )
+
+    # 过滤逻辑：只有当列存在且用户选择了值时才应用
+    filtered = data.copy()
+    if platform_filter and "platform" in filtered.columns:
+        filtered = filtered[filtered["platform"].isin(platform_filter)]
+    if campaign_filter and "campaign_id" in filtered.columns:
+        filtered = filtered[filtered["campaign_id"].isin(campaign_filter)]
+    if creator_filter and "creator" in filtered.columns:
+        filtered = filtered[filtered["creator"].isin(creator_filter)]
+
+    st.dataframe(filtered.set_index("id"), use_container_width=True, height=420)
+
+    st.download_button(
+        "⬇️ 导出当前筛选结果（CSV）",
+        data=filtered.to_csv(index=False),
+        file_name="kol_results_filtered.csv",
+        mime="text/csv"
+    )
+
+
 
 
 
