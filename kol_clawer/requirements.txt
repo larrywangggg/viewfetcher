@@ -4,3 +4,4 @@ openpyxl==3.1.5
 requests==2.32.3
 SQLAlchemy==2.0.32
 yt_dlp==2024.8.6    
+git+https://github.com/yt-dlp/yt-dlp.git
