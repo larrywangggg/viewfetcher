@@ -2,8 +2,25 @@
 # fetchers.py
 import re
 import requests
-from typing import Optional, Dict, List
-from yt_dlp import YoutubeDL
+from typing import Optional, Dict, List, Any
+
+try:  # pragma: no cover - import guard for deployment environments
+    from yt_dlp import YoutubeDL  # type: ignore
+except ModuleNotFoundError as exc:  # pragma: no cover - handled at runtime
+    YoutubeDL = None  # type: ignore
+    _YTDLP_IMPORT_ERROR = exc
+else:
+    _YTDLP_IMPORT_ERROR = None
+
+
+def _get_ytdlp() -> Any:
+    """Return YoutubeDL class or raise a descriptive error if missing."""
+    if YoutubeDL is None:  # pragma: no cover - depends on deployment install
+        raise RuntimeError(
+            "当前环境缺少 yt-dlp 依赖。请确认 requirements.txt 或部署平台的依赖配置中包含"
+            " `yt-dlp`（安装时使用连字符，导入时使用下划线 `yt_dlp`）。"
+        ) from _YTDLP_IMPORT_ERROR
+    return YoutubeDL
 
 # ---------- YouTube: 提取 videoId ----------
 YOUTUBE_VIDEO_ID_RE = re.compile(
@@ -28,7 +45,8 @@ YDL_OPTS = {
 }
 
 def fetch_by_ytdlp(url: str) -> Dict[str, int]:
-    with YoutubeDL(YDL_OPTS) as ydl:
+     ydl_cls = _get_ytdlp()
+     with ydl_cls(YDL_OPTS) as ydl:
         info = ydl.extract_info(url, download=False)
         views = int(info.get("view_count") or info.get("views") or 0)
         likes = int(info.get("like_count") or info.get("likes") or 0)

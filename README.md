@@ -91,13 +91,16 @@ All data is saved to `kol_results.sqlite3` in the project root.
 
 ## 🛠 Common Issues & Tips
 
-- If Instagram / TikTok videos fail, it’s due to anti-scraping or missing API.  
-- YouTube is the most stable via official API  
-- To reset database:  
+- If Instagram / TikTok videos fail, it’s due to anti-scraping or missing API.
+- YouTube is the most stable via official API
+- To reset database:
 
 ```bash
 rm kol_results.sqlite3
 ```
+
+Are you getting `ModuleNotFoundError: No module named 'yt_dlp'` when deploying? Please confirm that `yt-dlp` is installed in the dependencies.
+(Use hyphens when installing and underscores when importing).
 
 ## 📌 Future Improvements
 
